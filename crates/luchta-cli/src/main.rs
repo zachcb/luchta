@@ -19,6 +19,7 @@ mod reports;
 mod rss;
 mod run;
 mod session;
+mod sessions_cmd;
 mod since;
 mod watch;
 mod why;
@@ -164,6 +165,7 @@ async fn run(cli: Cli) -> Result<()> {
             quiet,
             command,
         } => session::dispatch_session(&workspace_root, name, quiet, command).await,
+        Commands::Sessions { json } => sessions_cmd::dispatch_sessions(&workspace_root, json),
         Commands::Logs {
             tasks,
             packages,
@@ -420,6 +422,7 @@ fn command_run_args(command: Commands) -> RunArgs {
         Commands::Watch { .. }
         | Commands::Await { .. }
         | Commands::Session { .. }
+        | Commands::Sessions { .. }
         | Commands::Logs { .. }
         | Commands::Why { .. }
         | Commands::List { .. }

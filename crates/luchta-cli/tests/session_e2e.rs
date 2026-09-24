@@ -337,3 +337,71 @@ fn invalid_sessions_block_names_the_key() {
         stderr_of(&output)
     );
 }
+
+#[test]
+fn sessions_json_lists_live_sessions_and_drops_killed_ones() {
+    let ws = workspace_with_config(CONFIG);
+    let registry = TempDir::new().unwrap();
+    let mut first = Background::spawn(session_sh(ws.path(), registry.path(), HOLD));
+    wait_for_line(&ws.path().join("port.out"));
+
+    let listed = luchta(ws.path(), registry.path())
+        .args(["sessions", "--json"])
+        .output()
+        .unwrap();
+    assert!(listed.status.success(), "{}", stderr_of(&listed));
+    let records: serde_json::Value = serde_json::from_slice(&listed.stdout).unwrap();
+    let records = records.as_array().unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0]["ports"][0]["port"], 41081);
+    assert_eq!(records[0]["pid"], first.0.id());
+    assert_eq!(
+        records[0]["workspace_root"],
+        fs::canonicalize(ws.path()).unwrap().to_str().unwrap()
+    );
+
+    first.signal_group(libc::SIGKILL);
+    first.wait();
+    let after = luchta(ws.path(), registry.path())
+        .args(["sessions", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&after.stdout).unwrap(),
+        serde_json::json!([])
+    );
+}
+
+#[test]
+fn sessions_table_marks_the_current_worktree() {
+    let ws = workspace_with_config(CONFIG);
+    let registry = TempDir::new().unwrap();
+    let mut cmd = luchta(ws.path(), registry.path());
+    cmd.args(["session", "--name", "alpha", "--", "sh", "-c", HOLD]);
+    let _first = Background::spawn(cmd);
+    wait_for_line(&ws.path().join("port.out"));
+
+    let listed = luchta(ws.path(), registry.path())
+        .arg("sessions")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&listed.stdout);
+    assert!(listed.status.success(), "{}", stderr_of(&listed));
+    assert!(stdout.contains("* alpha  slot 0"), "{stdout}");
+    assert!(stdout.contains("web  http://localhost:41081"), "{stdout}");
+}
+
+#[test]
+fn sessions_without_live_sessions_says_so() {
+    let ws = workspace_with_config(CONFIG);
+    let registry = TempDir::new().unwrap();
+    let listed = luchta(ws.path(), registry.path())
+        .arg("sessions")
+        .output()
+        .unwrap();
+    assert!(listed.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&listed.stdout),
+        "no live sessions\n"
+    );
+}

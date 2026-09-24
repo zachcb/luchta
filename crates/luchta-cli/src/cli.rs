@@ -187,6 +187,12 @@ pub enum Commands {
         #[arg(last = true, required = true, value_name = "COMMAND")]
         command: Vec<String>,
     },
+    /// List live `luchta session` sessions and their URLs.
+    Sessions {
+        /// Print the session records as JSON.
+        #[arg(long)]
+        json: bool,
+    },
     /// View cached logs and metadata for previously executed tasks.
     Logs {
         /// Task names to match; supports glob wildcards.
