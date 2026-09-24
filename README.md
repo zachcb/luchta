@@ -92,7 +92,7 @@ The project is organized into a multi-crate Cargo workspace under `crates/`:
 - `luchta-workspace`: Workspace discovery and Package Graph construction.
 - `luchta-engine`: Task Graph construction and the weighted task executor.
 - `luchta-cli`: Entry point, `clap` CLI, and executable config script loading.
-- `crates/luchta-sessions`: Per-worktree dev sessions — port plans, the machine-wide session registry, and slot allocation behind `luchta session` / `luchta sessions`.
+- `luchta-sessions`: Per-worktree dev sessions — port plans, the machine-wide session registry, and slot allocation behind `luchta session` / `luchta sessions`.
 
 Project automation lives in the `xtask/` crate (the standard Rust `xtask`
 pattern), invoked via the `cargo xtask` alias.
