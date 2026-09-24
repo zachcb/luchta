@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, HashMap};
 
 use serde::{Deserialize, Deserializer};
 
-use crate::{CacheConfig, DependsOn, EnvSpec, TaskDefinition};
+use crate::{CacheConfig, DependsOn, EnvSpec, SessionsConfig, TaskDefinition};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 /// Worker command definition shared across crates.
@@ -76,6 +76,9 @@ pub struct LuchtaConfig {
     /// Global cache settings applied when config object is present.
     #[serde(default)]
     pub cache: Option<CacheConfig>,
+    /// Per-worktree port allocation for `luchta session`.
+    #[serde(default)]
+    pub sessions: Option<SessionsConfig>,
 }
 
 /// Scheduler concurrency settings from `[concurrency]` table.

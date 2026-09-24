@@ -3014,6 +3014,7 @@ version = "0.3.2"
 name = "luchta-types"
 version = "0.3.2"
 dependencies = [
+ "indexmap",
  "serde",
  "serde_json",
  "toml",

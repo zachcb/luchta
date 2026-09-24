@@ -10,6 +10,7 @@ homepage.workspace = true
 description.workspace = true
 
 [dependencies]
+indexmap = { workspace = true }
 serde = { workspace = true }
 
 [dev-dependencies]

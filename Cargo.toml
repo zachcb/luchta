@@ -92,6 +92,7 @@ dirs = "7.0.0"
 fd-lock = "4"
 fs2 = "0.4.3"
 ignore = "0.4.27"
+indexmap = { version = "2", features = ["serde"] }
 notify = "9.0.0-rc.5"
 notify-debouncer-full = "0.8.0-rc.2"
 # Plain `mimalloc` rather than oxlint's `mimalloc-safe`: the latter builds via

@@ -4,11 +4,13 @@
 //! dependency declarations, and the `luchta-config.*` configuration shared across crates.
 
 mod config;
+mod sessions;
 
 use std::{collections::BTreeMap, fmt, str::FromStr};
 
 pub use config::*;
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
+pub use sessions::{SessionPortSpec, SessionsConfig};
 
 /// Synthetic package id used for workspace-root (`#task`) tasks.
 ///
