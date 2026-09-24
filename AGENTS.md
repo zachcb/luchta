@@ -13,6 +13,7 @@ Luchta is a Cargo workspace with the following crate layout:
 - `crates/luchta-engine`: Graph logic and execution engine.
 - `crates/luchta-cli`: CLI interface and configuration.
 - `crates/luchta-cache`: Filesystem-backed build cache, hashing, and skip logic (`thiserror`, filesystem records, no embedded DB).
+- `crates/luchta-sessions`: Per-worktree dev sessions — port plans, the lock-based machine-wide session registry, and slot allocation behind `luchta session` / `luchta sessions` (`thiserror`).
 - `crates/luchta-yarn-env`: Computes the environment Yarn Berry injects when running a script (bin shims, `NODE_OPTIONS`, `npm_*`) from the PnP manifest via the `pnp` crate; `luchta-yarn-worker` uses it for direct execution. Its `test-fixture` feature exposes `PnpFixture`, a synthetic PnP project builder for other crates' tests.
 - `xtask`: Project automation crate (standard Rust `xtask` pattern), run via the `cargo xtask` alias.
 

@@ -138,13 +138,33 @@ fn child_env(record: &SessionRecord) -> Vec<(String, String)> {
     env
 }
 
-fn warn_about_overrides(env: &[(String, String)]) {
-    for (key, value) in env {
-        if let Ok(existing) = std::env::var(key) {
-            if existing != *value {
-                eprintln!("luchta session: overriding {key}={existing} with {value}");
-            }
-        }
+/// Warning lines for declared port vars whose current value (as `lookup`
+/// reports it) differs from what this session will set. Only `record.ports`
+/// is considered — never `LUCHTA_SESSION_*` — so a session started inside
+/// another session doesn't warn about identity vars the outer session set.
+fn overridden_ports(
+    record: &SessionRecord,
+    lookup: impl Fn(&str) -> Option<String>,
+) -> Vec<String> {
+    record
+        .ports
+        .iter()
+        .filter_map(|port| {
+            let existing = lookup(&port.env)?;
+            let value = port.port.to_string();
+            (existing != value).then(|| {
+                format!(
+                    "luchta session: overriding {}={existing} with {value}",
+                    port.env
+                )
+            })
+        })
+        .collect()
+}
+
+fn warn_about_overrides(record: &SessionRecord) {
+    for line in overridden_ports(record, |key| std::env::var(key).ok()) {
+        eprintln!("{line}");
     }
 }
 
@@ -153,7 +173,7 @@ async fn run_child(record: &SessionRecord, command: &[String]) -> Result<ExitSta
         .split_first()
         .ok_or_else(|| miette!("luchta session needs a command after `--`"))?;
     let env = child_env(record);
-    warn_about_overrides(&env);
+    warn_about_overrides(record);
     // Install handlers before spawning so no signal slips through the gap.
     let mut signals = Signals::install()?;
     let mut child = tokio::process::Command::new(program)
@@ -311,5 +331,31 @@ mod tests {
         assert_eq!(format_age(now - 125), "2m");
         assert_eq!(format_age(now - 7_300), "2h");
         assert_eq!(format_age(now - 200_000), "2d");
+    }
+
+    #[test]
+    fn overridden_ports_warns_only_for_declared_port_vars() {
+        let lookup = |key: &str| match key {
+            "WEB" => Some("1234".to_string()),
+            // A session-inside-a-session would have these preset by the
+            // outer session; they must never trigger a warning.
+            "LUCHTA_SESSION_NAME" => Some("outer".to_string()),
+            "LUCHTA_SESSION_SLOT" => Some("9".to_string()),
+            "LUCHTA_SESSION_ID" => Some("9-1-abc".to_string()),
+            _ => None,
+        };
+        assert_eq!(
+            overridden_ports(&record(), lookup),
+            vec!["luchta session: overriding WEB=1234 with 9081".to_string()]
+        );
+    }
+
+    #[test]
+    fn overridden_ports_is_silent_when_values_match_or_are_unset() {
+        let lookup = |key: &str| match key {
+            "AUTH_PORT" => Some("9011".to_string()),
+            _ => None,
+        };
+        assert!(overridden_ports(&record(), lookup).is_empty());
     }
 }

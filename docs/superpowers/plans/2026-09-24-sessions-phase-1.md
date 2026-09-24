@@ -29,6 +29,9 @@
 2. `LUCHTA_SESSIONS_DIR` is **not** added to the nextest hermetic allowlists. Tests pass it explicitly to spawned `luchta` processes via `Command::env`, which the wrapper does not filter; allowlisting would only let a developer's ambient value leak into tests.
 3. Ports are held in an `IndexMap` so "first declared `http` port" (the default service) is well-defined.
 4. `Session` removes its `slot-<N>.json` on drop (clean exit) in addition to ignoring stale records.
+5. Session `id` is `{slot}-{pid}-{nanos:x}` instead of a random UUID (no uuid dependency); unique per run, sufficient for phase 3's env tagging.
+6. Locks use std `File::lock`/`try_lock` instead of `fd-lock` (no unsafe, same flock/LockFileEx semantics).
+7. `ResolvedPort` carries `default_service` so phase 2 can route bare `<session>.localhost` from the record alone.
 
 ## Review Focus
 

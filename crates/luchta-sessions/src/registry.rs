@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::ResolvedPort;
 
-/// Overrides the registry directory (used by tests).
+/// Overrides the session registry directory.
 pub const SESSIONS_DIR_ENV: &str = "LUCHTA_SESSIONS_DIR";
 
 const ALLOC_LOCK: &str = "alloc.lock";

@@ -47,6 +47,8 @@ pub enum PlanError {
     MultipleDefaultServices,
     #[error("sessions.ports.{env}: defaultService requires http: true")]
     DefaultServiceNotHttp { env: String },
+    #[error("sessions.ports.{env}.default must be greater than 0")]
+    ZeroPort { env: String },
 }
 
 /// A validated `sessions` config. Construct with [`PortPlan::from_config`].
@@ -88,6 +90,7 @@ impl PortPlan {
     /// Ports for `slot`. `slot` must be below [`PortPlan::max_slots`]; the
     /// range check in `from_config` guarantees those ports fit in a `u16`.
     pub fn ports_for_slot(&self, slot: u32) -> Vec<ResolvedPort> {
+        debug_assert!(slot < self.max_slots, "slot {slot} out of range");
         let offset = slot * self.stride;
         self.base
             .iter()
@@ -120,18 +123,11 @@ fn validate_names(config: &SessionsConfig) -> Result<(), PlanError> {
         if env.is_empty() || env.contains(['=', '\0']) {
             return Err(PlanError::InvalidEnvName { env: env.clone() });
         }
+        if spec.default == 0 {
+            return Err(PlanError::ZeroPort { env: env.clone() });
+        }
         if let Some(service) = &spec.service {
-            if !is_dns_label(service) {
-                return Err(PlanError::InvalidServiceName {
-                    env: env.clone(),
-                    service: service.clone(),
-                });
-            }
-            if !services.insert(service.as_str()) {
-                return Err(PlanError::DuplicateService {
-                    service: service.clone(),
-                });
-            }
+            validate_service(env, service, &mut services)?;
         }
         if spec.default_service {
             if !spec.http {
@@ -142,6 +138,27 @@ fn validate_names(config: &SessionsConfig) -> Result<(), PlanError> {
     }
     if default_services > 1 {
         return Err(PlanError::MultipleDefaultServices);
+    }
+    Ok(())
+}
+
+/// Checks one port's `service` name: must be a DNS label and not already
+/// declared by another port in this config.
+fn validate_service<'a>(
+    env: &str,
+    service: &'a str,
+    seen: &mut BTreeSet<&'a str>,
+) -> Result<(), PlanError> {
+    if !is_dns_label(service) {
+        return Err(PlanError::InvalidServiceName {
+            env: env.to_string(),
+            service: service.to_string(),
+        });
+    }
+    if !seen.insert(service) {
+        return Err(PlanError::DuplicateService {
+            service: service.to_string(),
+        });
     }
     Ok(())
 }
@@ -299,6 +316,16 @@ mod tests {
         assert_eq!(
             plan(r#"{"ports":{"A":{"default":1,"defaultService":true}}}"#),
             Err(PlanError::DefaultServiceNotHttp {
+                env: "A".to_string()
+            })
+        );
+    }
+
+    #[test]
+    fn rejects_a_zero_default_port() {
+        assert_eq!(
+            plan(r#"{"ports":{"A":{"default":0}}}"#),
+            Err(PlanError::ZeroPort {
                 env: "A".to_string()
             })
         );

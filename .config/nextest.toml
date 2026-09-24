@@ -16,11 +16,13 @@ experimental = ["wrapper-scripts"]
 # `session_e2e` gets its own fully-serial group instead of sharing this one.
 # Its tests all probe real loopback TCP ports from the same hardcoded test
 # `CONFIG` (so multiple test processes bind-probe the identical port at
-# nearly the same instant on startup); running more than one at a time is a
-# genuine cross-process race, not a timing/CPU-contention issue like the
-# other groups here, and it reproduces reliably at max-threads > 1 (verified
-# via repeated `cargo nextest run -p luchta-cli --test session_e2e`, and
-# resolved via `--test-threads=1`).
+# nearly the same instant on startup). Each test uses its own
+# `LUCHTA_SESSIONS_DIR`, so nothing serializes those probes of the shared
+# default port the way one registry's `alloc.lock` would in production; this
+# is a test-only race, not a timing/CPU-contention issue like the other
+# groups here, and it reproduces reliably at max-threads > 1 (verified via
+# repeated `cargo nextest run -p luchta-cli --test session_e2e`, and resolved
+# via `--test-threads=1`).
 [test-groups]
 watch-e2e = { max-threads = 4 }
 session-e2e = { max-threads = 1 }
@@ -43,10 +45,10 @@ filter = "all()"
 platform = { host = "cfg(windows)" }
 run-wrapper = "hermetic-windows"
 
-# `session_e2e` must be fully serial (see the comment above `session-e2e`);
-# this override is listed first because nextest applies the first matching
-# override, and it would otherwise also match the broader watch-e2e filter
-# below.
+# `session_e2e` must be fully serial (see the comment above `session-e2e`).
+# It is a separate serial group from `watch-e2e` below, not a subset of it —
+# the `watch-e2e` filter (`worker_integration`, `watcher::e2e`, `driver_e2e`)
+# doesn't match `session_e2e` at all.
 [[profile.default.overrides]]
 filter = 'binary_id(luchta-cli::session_e2e)'
 test-group = "session-e2e"

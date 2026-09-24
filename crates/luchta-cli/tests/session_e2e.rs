@@ -15,7 +15,7 @@ use std::{
 
 use assert_fs::{prelude::*, TempDir};
 
-const CONFIG: &str = r#"{"sessions":{"ports":{"TEST_WEB_PORT":{"default":41081,"service":"web","http":true},"TEST_API_PORT":{"default":41090}}}}"#;
+const CONFIG: &str = r#"{"sessions":{"ports":{"TEST_WEB_PORT":{"default":21081,"service":"web","http":true},"TEST_API_PORT":{"default":21090}}}}"#;
 const HOLD: &str = r#"echo "$TEST_WEB_PORT" > port.out; while [ ! -f stop ]; do sleep 0.05; done"#;
 const WAIT: Duration = Duration::from_secs(10);
 
@@ -134,13 +134,13 @@ fn session_passes_ports_and_identity_to_the_child() {
     assert!(output.status.success(), "{stderr}");
     assert_eq!(
         wait_for_line(&ws.path().join("env.out")),
-        "41081 41090 0 feature-x"
+        "21081 21090 0 feature-x"
     );
     assert!(
         stderr.contains("luchta session feature-x (slot 0)"),
         "{stderr}"
     );
-    assert!(stderr.contains("web  http://localhost:41081"), "{stderr}");
+    assert!(stderr.contains("web  http://localhost:21081"), "{stderr}");
 }
 
 #[test]
@@ -160,7 +160,7 @@ fn concurrent_worktrees_get_distinct_ports() {
     let (a, b) = (workspace_with_config(CONFIG), workspace_with_config(CONFIG));
     let registry = TempDir::new().unwrap();
     let mut first = Background::spawn(session_sh(a.path(), registry.path(), HOLD));
-    assert_eq!(wait_for_line(&a.path().join("port.out")), "41081");
+    assert_eq!(wait_for_line(&a.path().join("port.out")), "21081");
 
     let second = session_sh(
         b.path(),
@@ -170,7 +170,7 @@ fn concurrent_worktrees_get_distinct_ports() {
     .output()
     .unwrap();
     assert!(second.status.success(), "{}", stderr_of(&second));
-    assert_eq!(wait_for_line(&b.path().join("port.out")), "42081");
+    assert_eq!(wait_for_line(&b.path().join("port.out")), "22081");
 
     fs::write(a.path().join("stop"), "").unwrap();
     assert!(first.wait().success());
@@ -195,7 +195,7 @@ fn second_session_in_the_same_worktree_is_refused() {
         )),
         "{stderr}"
     );
-    assert!(stderr.contains("http://localhost:41081"), "{stderr}");
+    assert!(stderr.contains("http://localhost:21081"), "{stderr}");
     assert!(!ws.path().join("second-ran").exists());
 
     fs::write(ws.path().join("stop"), "").unwrap();
@@ -297,9 +297,9 @@ fn preset_port_variable_is_overridden_with_a_warning() {
     .unwrap();
 
     assert!(output.status.success(), "{}", stderr_of(&output));
-    assert_eq!(wait_for_line(&ws.path().join("port.out")), "41081");
+    assert_eq!(wait_for_line(&ws.path().join("port.out")), "21081");
     assert!(
-        stderr_of(&output).contains("overriding TEST_WEB_PORT=1234 with 41081"),
+        stderr_of(&output).contains("overriding TEST_WEB_PORT=1234 with 21081"),
         "{}",
         stderr_of(&output)
     );
@@ -324,7 +324,7 @@ fn missing_sessions_block_is_reported() {
 #[test]
 fn invalid_sessions_block_names_the_key() {
     let ws = workspace_with_config(
-        r#"{"sessions":{"slotStride":5,"ports":{"A":{"default":41081},"B":{"default":41090}}}}"#,
+        r#"{"sessions":{"slotStride":5,"ports":{"A":{"default":21081},"B":{"default":21090}}}}"#,
     );
     let registry = TempDir::new().unwrap();
     let output = session_sh(ws.path(), registry.path(), "true")
@@ -353,7 +353,7 @@ fn sessions_json_lists_live_sessions_and_drops_killed_ones() {
     let records: serde_json::Value = serde_json::from_slice(&listed.stdout).unwrap();
     let records = records.as_array().unwrap();
     assert_eq!(records.len(), 1);
-    assert_eq!(records[0]["ports"][0]["port"], 41081);
+    assert_eq!(records[0]["ports"][0]["port"], 21081);
     assert_eq!(records[0]["pid"], first.0.id());
     assert_eq!(
         records[0]["workspace_root"],
@@ -388,7 +388,7 @@ fn sessions_table_marks_the_current_worktree() {
     let stdout = String::from_utf8_lossy(&listed.stdout);
     assert!(listed.status.success(), "{}", stderr_of(&listed));
     assert!(stdout.contains("* alpha  slot 0"), "{stdout}");
-    assert!(stdout.contains("web  http://localhost:41081"), "{stdout}");
+    assert!(stdout.contains("web  http://localhost:21081"), "{stdout}");
 }
 
 #[test]
