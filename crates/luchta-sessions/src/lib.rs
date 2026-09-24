@@ -3,9 +3,13 @@
 
 mod name;
 mod plan;
+mod registry;
 
 pub use name::{dedupe_name, is_dns_label, sanitize_label};
 pub use plan::{PlanError, PortPlan, ResolvedPort};
+pub use registry::{
+    LiveSession, Registry, RegistryError, SessionRecord, SlotLock, SESSIONS_DIR_ENV,
+};
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
