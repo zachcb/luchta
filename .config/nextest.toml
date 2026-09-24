@@ -12,8 +12,18 @@ experimental = ["wrapper-scripts"]
 # max-threads = 4: matches the vCPU count of typical CI runners (so the cap is
 # effectively a no-op there) while meaningfully cutting parallel load on
 # higher-core dev machines, where the timeouts actually showed up.
+#
+# `session_e2e` gets its own fully-serial group instead of sharing this one.
+# Its tests all probe real loopback TCP ports from the same hardcoded test
+# `CONFIG` (so multiple test processes bind-probe the identical port at
+# nearly the same instant on startup); running more than one at a time is a
+# genuine cross-process race, not a timing/CPU-contention issue like the
+# other groups here, and it reproduces reliably at max-threads > 1 (verified
+# via repeated `cargo nextest run -p luchta-cli --test session_e2e`, and
+# resolved via `--test-threads=1`).
 [test-groups]
 watch-e2e = { max-threads = 4 }
+session-e2e = { max-threads = 1 }
 
 [scripts.wrapper.hermetic-unix]
 command = { command-line = "scripts/nextest-hermetic.sh", relative-to = "workspace-root" }
@@ -32,6 +42,14 @@ run-wrapper = "hermetic-unix"
 filter = "all()"
 platform = { host = "cfg(windows)" }
 run-wrapper = "hermetic-windows"
+
+# `session_e2e` must be fully serial (see the comment above `session-e2e`);
+# this override is listed first because nextest applies the first matching
+# override, and it would otherwise also match the broader watch-e2e filter
+# below.
+[[profile.default.overrides]]
+filter = 'binary_id(luchta-cli::session_e2e)'
+test-group = "session-e2e"
 
 # Assign the process-spawning e2e tests to the throttled watch-e2e group.
 # `binary_id(...)` targets whole test binaries; the driver_e2e tests live in

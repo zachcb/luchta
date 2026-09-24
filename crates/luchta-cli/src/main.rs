@@ -18,6 +18,7 @@ mod progress_task_list;
 mod reports;
 mod rss;
 mod run;
+mod session;
 mod since;
 mod watch;
 mod why;
@@ -158,6 +159,11 @@ async fn run(cli: Cli) -> Result<()> {
             packages,
             top_level,
         } => dispatch_await(&workspace_root, tasks, packages, top_level).await,
+        Commands::Session {
+            name,
+            quiet,
+            command,
+        } => session::dispatch_session(&workspace_root, name, quiet, command).await,
         Commands::Logs {
             tasks,
             packages,
@@ -413,6 +419,7 @@ fn command_run_args(command: Commands) -> RunArgs {
         },
         Commands::Watch { .. }
         | Commands::Await { .. }
+        | Commands::Session { .. }
         | Commands::Logs { .. }
         | Commands::Why { .. }
         | Commands::List { .. }

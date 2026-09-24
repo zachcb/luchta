@@ -2809,6 +2809,7 @@ dependencies = [
  "luchta-cache",
  "luchta-engine",
  "luchta-lockfiles",
+ "luchta-sessions",
  "luchta-test-support",
  "luchta-types",
  "luchta-worker",
