@@ -92,6 +92,7 @@ The project is organized into a multi-crate Cargo workspace under `crates/`:
 - `luchta-workspace`: Workspace discovery and Package Graph construction.
 - `luchta-engine`: Task Graph construction and the weighted task executor.
 - `luchta-cli`: Entry point, `clap` CLI, and executable config script loading.
+- `crates/luchta-sessions`: Per-worktree dev sessions — port plans, the machine-wide session registry, and slot allocation behind `luchta session` / `luchta sessions`.
 
 Project automation lives in the `xtask/` crate (the standard Rust `xtask`
 pattern), invoked via the `cargo xtask` alias.
@@ -1440,6 +1441,52 @@ Luchta automatically performs throttled garbage collection of old local cache en
 
 #### Stats
 Shared cache hits are shown in the build summary: `📥 <n>`. Set `LUCHTA_SHARED_CACHE_STATS=1` for the optional per-cycle diagnostics line; normal and summary output are unchanged otherwise.
+
+### Sessions
+
+`luchta session` runs a long-lived command — typically your dev servers — with
+its own set of ports, so several worktrees of the same app can run side by
+side. Declare the ports your app reads from environment variables:
+
+```jsonc
+{
+  "sessions": {
+    "slotStride": 1000, // optional, default 1000
+    "maxSlots": 20,     // optional, default 20
+    "ports": {
+      "DEVSERVER_HTTP_PORT": { "default": 8081, "service": "web", "http": true },
+      "AUTH_DEV_HTTP_PORT":  { "default": 8011, "service": "auth", "http": true },
+      "REPORT_SERVER_METRICS_PORT": { "default": 9464 }
+    }
+  }
+}
+```
+
+Then wrap the command that starts your servers:
+
+```sh
+luchta session -- overmind s
+```
+
+Each concurrent session takes a slot; slot N sets every declared variable to
+`default + N * slotStride` (slot 0 uses the defaults unchanged), plus
+`LUCHTA_SESSION_NAME`, `LUCHTA_SESSION_SLOT`, and `LUCHTA_SESSION_ID`. A
+worktree gets its previous slot back when it is free. Slots whose ports are
+already in use by anything are skipped.
+
+- Starting a second session in the same worktree is refused and names the
+  running one (pid, age, URLs).
+- `luchta sessions` lists live sessions and their URLs; `--json` prints the
+  records.
+- `--name <name>` overrides the session name (default: the workspace
+  directory name). `--quiet` hides the startup banner.
+- The wrapper exits with the command's exit code, forwards SIGTERM/SIGHUP, and
+  lets Ctrl-C reach the command directly.
+
+Declare **every** port your servers bind, including metrics ports: tools such
+as overmind set `PORT` identically in every worktree, so any fallback to it
+collides. Session records live in `$XDG_RUNTIME_DIR/luchta/sessions` (or the
+user cache directory); set `LUCHTA_SESSIONS_DIR` to override.
 
 ### Build Lock
 
