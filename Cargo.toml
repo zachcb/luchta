@@ -28,6 +28,7 @@ members = [
     "crates/luchta-yarn-filter",
     "crates/luchta-command-filter",
     "crates/luchta-cache",
+    "crates/luchta-sessions",
     "crates/luchta-ast-grep-worker",
     "crates/luchta-oxlint-worker",
     "crates/luchta-oxc-transform-worker",
