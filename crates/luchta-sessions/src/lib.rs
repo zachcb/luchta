@@ -1,10 +1,12 @@
 //! Per-worktree dev sessions: port plans, the machine-wide session registry,
 //! and slot allocation used by `luchta session` and `luchta sessions`.
 
+mod alloc;
 mod name;
 mod plan;
 mod registry;
 
+pub use alloc::{allocate, AllocError, PortProbe, Session, SessionRequest, TcpProbe};
 pub use name::{dedupe_name, is_dns_label, sanitize_label};
 pub use plan::{PlanError, PortPlan, ResolvedPort};
 pub use registry::{

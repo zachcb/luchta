@@ -171,14 +171,12 @@ impl Registry {
     }
 
     /// Slot this workspace root used last, if remembered.
-    #[allow(dead_code)] // used by alloc (Task 4)
     pub(crate) fn last_slot(&self, workspace_root: &Path) -> Option<u32> {
         self.read_last_slots()
             .get(&root_key(workspace_root))
             .copied()
     }
 
-    #[allow(dead_code)] // used by alloc (Task 4)
     pub(crate) fn remember_slot(
         &self,
         workspace_root: &Path,
