@@ -258,6 +258,32 @@ fn ctrl_c_to_the_process_group_lets_the_child_finish() {
 }
 
 #[test]
+fn ctrl_backslash_to_the_process_group_lets_the_child_finish() {
+    let ws = workspace_with_config(CONFIG);
+    let registry = TempDir::new().unwrap();
+    let script = r#"trap 'echo quit > quit.out; exit 0' QUIT; echo ready > ready.out; while :; do sleep 0.05; done"#;
+    let mut session = Background::spawn(session_sh(ws.path(), registry.path(), script));
+    wait_for_line(&ws.path().join("ready.out"));
+
+    session.signal_group(libc::SIGQUIT);
+    assert_eq!(session.wait().code(), Some(0));
+    assert_eq!(wait_for_line(&ws.path().join("quit.out")), "quit");
+}
+
+#[test]
+fn sighup_is_forwarded_to_the_child() {
+    let ws = workspace_with_config(CONFIG);
+    let registry = TempDir::new().unwrap();
+    let script = r#"trap 'echo hup > hup.out; exit 4' HUP; echo ready > ready.out; while :; do sleep 0.05; done"#;
+    let mut session = Background::spawn(session_sh(ws.path(), registry.path(), script));
+    wait_for_line(&ws.path().join("ready.out"));
+
+    session.signal(libc::SIGHUP);
+    assert_eq!(session.wait().code(), Some(4));
+    assert_eq!(wait_for_line(&ws.path().join("hup.out")), "hup");
+}
+
+#[test]
 fn failed_spawn_releases_the_slot() {
     let ws = workspace_with_config(CONFIG);
     let registry = TempDir::new().unwrap();

@@ -183,6 +183,9 @@ impl Registry {
         slot: u32,
     ) -> Result<(), RegistryError> {
         let mut slots = self.read_last_slots();
+        // Worktrees get deleted; without this, entries for roots that no
+        // longer exist would accumulate in this file forever.
+        slots.retain(|key, _| Path::new(key).exists());
         slots.insert(root_key(workspace_root), slot);
         let json = serde_json::to_vec_pretty(&slots).expect("slot map always serializes");
         write_atomically(&self.dir.join(LAST_SLOTS), &json)
@@ -368,6 +371,24 @@ mod tests {
         assert_eq!(registry.last_slot(&root), None);
         registry.remember_slot(&root, 5).unwrap();
         assert_eq!(registry.last_slot(&root), Some(5));
+    }
+
+    #[test]
+    fn remembering_a_slot_prunes_roots_that_no_longer_exist() {
+        let temp = TempDir::new().unwrap();
+        let registry = registry(&temp);
+        let gone = temp.path().join("gone");
+        fs::create_dir_all(&gone).unwrap();
+        registry.remember_slot(&gone, 3).unwrap();
+        assert_eq!(registry.last_slot(&gone), Some(3));
+
+        fs::remove_dir_all(&gone).unwrap();
+        let still_here = temp.path().join("still-here");
+        fs::create_dir_all(&still_here).unwrap();
+        registry.remember_slot(&still_here, 4).unwrap();
+
+        assert_eq!(registry.last_slot(&gone), None);
+        assert_eq!(registry.last_slot(&still_here), Some(4));
     }
 
     #[test]

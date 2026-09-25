@@ -1477,11 +1477,12 @@ already in use by anything are skipped.
 - Starting a second session in the same worktree is refused and names the
   running one (pid, age, URLs).
 - `luchta sessions` lists live sessions and their URLs; `--json` prints the
-  records.
+  records, warning on stderr about any held slot whose record is unreadable
+  (stdout stays a plain array).
 - `--name <name>` overrides the session name (default: the workspace
   directory name). `--quiet` hides the startup banner.
 - The wrapper exits with the command's exit code, forwards SIGTERM/SIGHUP, and
-  lets Ctrl-C reach the command directly.
+  lets Ctrl-C and Ctrl-\ reach the command directly.
 
 Declare **every** port your servers bind, including metrics ports: tools such
 as overmind set `PORT` identically in every worktree, so any fallback to it

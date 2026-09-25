@@ -87,7 +87,21 @@ impl Session {
 impl Drop for Session {
     fn drop(&mut self) {
         // Runs before `_lock` is released, so no one reads a half-gone slot.
-        let _ = fs::remove_file(self.registry.record_path(self.record.slot));
+        let path = self.registry.record_path(self.record.slot);
+        if let Err(error) = fs::remove_file(&path) {
+            // Best-effort and must never panic from a destructor, but a
+            // failure here (other than the record already being gone) means
+            // a stale record may linger and confuse the next `luchta
+            // sessions` listing; `luchta-sessions` is a library crate with no
+            // diagnostics channel of its own, so stderr is the only way to
+            // surface this.
+            if error.kind() != io::ErrorKind::NotFound {
+                eprintln!(
+                    "luchta session: could not remove session record {}: {error}",
+                    path.display()
+                );
+            }
+        }
     }
 }
 
@@ -145,7 +159,8 @@ fn claim_slot(
     probe: &dyn PortProbe,
 ) -> Result<Option<(SlotLock, Vec<ResolvedPort>)>, RegistryError> {
     let preferred = preferred.filter(|slot| *slot < plan.max_slots());
-    for slot in preferred.into_iter().chain(0..plan.max_slots()) {
+    let rest = (0..plan.max_slots()).filter(move |slot| Some(*slot) != preferred);
+    for slot in preferred.into_iter().chain(rest) {
         let Some(lock) = registry.try_lock_slot(slot)? else {
             continue;
         };
@@ -184,7 +199,8 @@ mod tests {
     use crate::LiveSession;
     use luchta_types::SessionsConfig;
     use std::{
-        collections::BTreeSet,
+        cell::RefCell,
+        collections::{BTreeMap, BTreeSet},
         fs,
         net::TcpListener,
         sync::{Arc, Barrier},
@@ -393,6 +409,42 @@ mod tests {
         let sessions: Vec<Session> = handles.into_iter().map(|h| h.join().unwrap()).collect();
         let slots: BTreeSet<u32> = sessions.iter().map(|s| s.record().slot).collect();
         assert_eq!(slots.len(), 8);
+    }
+
+    #[test]
+    fn the_preferred_slots_port_is_probed_only_once_when_busy() {
+        struct CountingProbe {
+            busy: u16,
+            counts: RefCell<BTreeMap<u16, u32>>,
+        }
+        impl PortProbe for CountingProbe {
+            fn is_free(&self, port: u16) -> bool {
+                *self.counts.borrow_mut().entry(port).or_insert(0) += 1;
+                port != self.busy
+            }
+        }
+
+        let fx = Fixture::new();
+        let root = fx.workspace("app");
+        // Slot 0's own port is preferred (as if this worktree last ran in
+        // slot 0), but that port is busy, forcing a fall back to the next
+        // free slot.
+        let canonical = fs::canonicalize(&root).unwrap();
+        fx.registry.ensure_dir().unwrap();
+        fx.registry.remember_slot(&canonical, 0).unwrap();
+        let probe = CountingProbe {
+            busy: 41081,
+            counts: RefCell::new(BTreeMap::new()),
+        };
+
+        let session = allocate(&fx.registry, &plan(3), request(&root), &probe).unwrap();
+
+        assert_eq!(session.record().slot, 1);
+        assert_eq!(
+            probe.counts.borrow().get(&41081),
+            Some(&1),
+            "the preferred slot's busy port must be probed exactly once, not once per scan pass"
+        );
     }
 
     #[test]

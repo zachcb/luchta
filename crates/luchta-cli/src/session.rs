@@ -4,7 +4,8 @@
 use std::{fmt::Write as _, path::Path, process::ExitStatus};
 
 use luchta_sessions::{
-    allocate, unix_now, AllocError, PortPlan, Registry, SessionRecord, SessionRequest, TcpProbe,
+    allocate, unix_now, AllocError, PortPlan, Registry, Session, SessionRecord, SessionRequest,
+    TcpProbe,
 };
 use miette::{miette, IntoDiagnostic, Result, WrapErr};
 
@@ -21,8 +22,8 @@ pub async fn dispatch_session(
         .sessions
         .as_ref()
         .ok_or_else(missing_sessions_block)?;
-    let plan = PortPlan::from_config(sessions).map_err(|error| miette!("{error}"))?;
-    let registry = Registry::from_env().map_err(|error| miette!("{error}"))?;
+    let plan = PortPlan::from_config(sessions).into_diagnostic()?;
+    let registry = Registry::from_env().into_diagnostic()?;
     let request = SessionRequest {
         workspace_root,
         name: name.as_deref(),
@@ -34,10 +35,20 @@ pub async fn dispatch_session(
     if !quiet {
         eprint!("{}", banner(session.record()));
     }
-    let status = run_child(session.record(), &command).await?;
-    // Release the slot before exiting: `process::exit` skips destructors.
-    drop(session);
+    let status = run_in_session(session, &command).await?;
     std::process::exit(exit_code(status))
+}
+
+/// Runs `command` inside `session`, releasing its slot before returning on
+/// both the success and error paths. `process::exit` skips destructors, so
+/// the caller must not exit while still holding `session`; going through an
+/// owned `Session` here (rather than exiting inside this function) makes that
+/// impossible to get wrong, and lets this be tested in-process without
+/// spawning a real `luchta` binary.
+async fn run_in_session(session: Session, command: &[String]) -> Result<ExitStatus> {
+    let result = run_child(session.record(), command).await;
+    drop(session);
+    result
 }
 
 fn missing_sessions_block() -> miette::Report {
@@ -69,7 +80,7 @@ fn render_alloc_error(error: AllocError) -> miette::Report {
                 "no free session slot; live sessions:\n{listing}"
             )
         }
-        other => miette!("{other}"),
+        other => miette::Report::from_err(other),
     }
 }
 
@@ -188,6 +199,7 @@ async fn run_child(record: &SessionRecord, command: &[String]) -> Result<ExitSta
 #[cfg(unix)]
 struct Signals {
     interrupt: tokio::signal::unix::Signal,
+    quit: tokio::signal::unix::Signal,
     terminate: tokio::signal::unix::Signal,
     hangup: tokio::signal::unix::Signal,
 }
@@ -203,6 +215,7 @@ impl Signals {
         };
         Ok(Self {
             interrupt: install(SignalKind::interrupt(), "SIGINT")?,
+            quit: install(SignalKind::quit(), "SIGQUIT")?,
             terminate: install(SignalKind::terminate(), "SIGTERM")?,
             hangup: install(SignalKind::hangup(), "SIGHUP")?,
         })
@@ -212,9 +225,11 @@ impl Signals {
         loop {
             tokio::select! {
                 status = child.wait() => return status.into_diagnostic(),
-                // The terminal already delivers SIGINT to the child's process
-                // group; keep waiting so the child can shut down on its own.
+                // The terminal already delivers SIGINT and SIGQUIT to the
+                // child's process group (Ctrl-C / Ctrl-\); keep waiting so the
+                // child can shut down on its own instead of us also dying.
                 _ = self.interrupt.recv() => {}
+                _ = self.quit.recv() => {}
                 _ = self.terminate.recv() => forward(child, libc::SIGTERM),
                 _ = self.hangup.recv() => forward(child, libc::SIGHUP),
             }
@@ -267,7 +282,9 @@ fn exit_code(status: ExitStatus) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use luchta_sessions::ResolvedPort;
+    use luchta_sessions::{PortPlan, Registry, ResolvedPort};
+    use luchta_types::SessionsConfig;
+    use tempfile::TempDir;
 
     fn record() -> SessionRecord {
         SessionRecord {
@@ -357,5 +374,44 @@ mod tests {
             _ => None,
         };
         assert!(overridden_ports(&record(), lookup).is_empty());
+    }
+
+    #[tokio::test]
+    async fn run_in_session_releases_the_slot_in_process_when_spawn_fails() {
+        let temp = TempDir::new().unwrap();
+        let registry = Registry::new(temp.path().join("registry"));
+        let workspace = temp.path().join("ws");
+        std::fs::create_dir_all(&workspace).unwrap();
+        let config: SessionsConfig =
+            serde_json::from_str(r#"{"ports":{"WEB":{"default":23081}}}"#).unwrap();
+        let plan = PortPlan::from_config(&config).unwrap();
+        let request = SessionRequest {
+            workspace_root: &workspace,
+            name: None,
+            branch: None,
+            command: vec!["/nonexistent/luchta-followup-cmd".to_string()],
+            pid: std::process::id(),
+        };
+        let session = allocate(&registry, &plan, request, &TcpProbe).unwrap();
+
+        let result =
+            run_in_session(session, &["/nonexistent/luchta-followup-cmd".to_string()]).await;
+
+        assert!(result.is_err());
+        // If the slot lock were only released at process exit, this would
+        // still see it held, since we are in the same process.
+        assert!(registry.live_sessions().unwrap().is_empty());
+    }
+
+    #[test]
+    fn render_alloc_error_keeps_the_source_error_for_unmatched_variants() {
+        let source = std::io::Error::new(std::io::ErrorKind::NotFound, "no such workspace");
+        let error = AllocError::WorkspaceRoot {
+            path: "/missing".into(),
+            source,
+        };
+        let report = render_alloc_error(error);
+        let source = std::error::Error::source(&*report).expect("source error preserved");
+        assert_eq!(source.to_string(), "no such workspace");
     }
 }

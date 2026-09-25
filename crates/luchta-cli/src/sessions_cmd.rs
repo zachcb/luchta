@@ -3,16 +3,17 @@
 use std::{fmt::Write as _, path::Path};
 
 use luchta_sessions::{LiveSession, Registry, SessionRecord};
-use miette::{miette, IntoDiagnostic, Result};
+use miette::{IntoDiagnostic, Result};
 
 use crate::session::{format_age, url_lines};
 
 pub fn dispatch_sessions(workspace_root: &Path, json: bool) -> Result<()> {
-    let registry = Registry::from_env().map_err(|error| miette!("{error}"))?;
-    let live = registry
-        .live_sessions()
-        .map_err(|error| miette!("{error}"))?;
+    let registry = Registry::from_env().into_diagnostic()?;
+    let live = registry.live_sessions().into_diagnostic()?;
     if json {
+        for warning in unreadable_slot_warnings(&live) {
+            eprintln!("{warning}");
+        }
         let records: Vec<&SessionRecord> = live.iter().filter_map(|s| s.record.as_ref()).collect();
         println!(
             "{}",
@@ -23,6 +24,21 @@ pub fn dispatch_sessions(workspace_root: &Path, json: bool) -> Result<()> {
     let current_root = std::fs::canonicalize(workspace_root).ok();
     print!("{}", render_table(&live, current_root.as_deref()));
     Ok(())
+}
+
+/// Stderr warning for each live slot whose record could not be read, so a
+/// `--json` consumer parsing stdout still learns a slot is being silently
+/// dropped from the listing.
+fn unreadable_slot_warnings(live: &[LiveSession]) -> Vec<String> {
+    live.iter()
+        .filter(|session| session.record.is_none())
+        .map(|session| {
+            format!(
+                "luchta sessions: slot {} is held but its record is unreadable",
+                session.slot
+            )
+        })
+        .collect()
 }
 
 fn render_table(live: &[LiveSession], current_root: Option<&Path>) -> String {
@@ -107,5 +123,39 @@ mod tests {
     #[test]
     fn says_when_nothing_is_live() {
         assert_eq!(render_table(&[], None), "no live sessions\n");
+    }
+
+    #[test]
+    fn unreadable_slot_warnings_names_each_slot_missing_a_record() {
+        let live = vec![
+            LiveSession {
+                slot: 0,
+                record: Some(record(0, "app", "/ws/app")),
+            },
+            LiveSession {
+                slot: 2,
+                record: None,
+            },
+            LiveSession {
+                slot: 5,
+                record: None,
+            },
+        ];
+        assert_eq!(
+            unreadable_slot_warnings(&live),
+            vec![
+                "luchta sessions: slot 2 is held but its record is unreadable".to_string(),
+                "luchta sessions: slot 5 is held but its record is unreadable".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn unreadable_slot_warnings_is_empty_when_every_record_reads() {
+        let live = vec![LiveSession {
+            slot: 0,
+            record: Some(record(0, "app", "/ws/app")),
+        }];
+        assert!(unreadable_slot_warnings(&live).is_empty());
     }
 }
