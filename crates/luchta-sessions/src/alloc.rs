@@ -133,7 +133,7 @@ pub fn allocate(
         return Err(AllocError::NoFreeSlot { live: records });
     };
     let name = session_name(request.name, &workspace_root, &records);
-    let env = resolved_env(plan, &ports, &name, lock.slot());
+    let env = resolved_env(plan, &name, lock.slot());
     let record = SessionRecord {
         slot: lock.slot(),
         id: session_id(lock.slot(), request.pid),
@@ -158,13 +158,8 @@ pub fn allocate(
     })
 }
 
-fn resolved_env(
-    plan: &PortPlan,
-    ports: &[ResolvedPort],
-    name: &str,
-    slot: u32,
-) -> Vec<SessionEnvVar> {
-    plan.env_for_slot(ports, name, slot)
+fn resolved_env(plan: &PortPlan, name: &str, slot: u32) -> Vec<SessionEnvVar> {
+    plan.env_for_slot(name, slot)
         .into_iter()
         .map(|(name, value)| SessionEnvVar { name, value })
         .collect()

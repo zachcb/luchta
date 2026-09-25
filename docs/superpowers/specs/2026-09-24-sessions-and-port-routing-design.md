@@ -95,9 +95,12 @@ New optional top-level key in the `luchta-config` JSON:
   worktrees.
 - `env` (optional; added after phase-1 review, for apps that pass ports
   around inside URLs rather than reading a port variable directly): a map of
-  extra env var name → template string, resolved after allocation. A
-  `${NAME}` placeholder must be a declared `ports` key, `LUCHTA_SESSION_NAME`,
-  or `LUCHTA_SESSION_SLOT`; any other `$` is literal. For example:
+  extra env var name → template string, resolved after allocation. `${`
+  always begins a placeholder, which must name a declared `ports` key,
+  `LUCHTA_SESSION_NAME`, or `LUCHTA_SESSION_SLOT`. A `$` not followed by `{`
+  is literal; there is no escape syntax, so `$${DEVSERVER_HTTP_PORT}` yields
+  a `$` followed by the port, and a literal `${` can't be expressed. For
+  example:
   ```jsonc
   "env": { "API_ROOT_URL": "http://localhost:${DEVSERVER_HTTP_PORT}" }
   ```

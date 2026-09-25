@@ -61,6 +61,8 @@ pub enum PlanError {
         "sessions.env.{key} conflicts with a declared port variable or a LUCHTA_SESSION_* variable"
     )]
     EnvVarConflict { key: String },
+    #[error("sessions.env.{key}: value must not contain a NUL byte")]
+    InvalidEnvValue { key: String },
 }
 
 /// A `sessions.env.{key}` value, pre-parsed into literal and placeholder
@@ -80,10 +82,9 @@ enum EnvSegment {
 }
 
 impl EnvTemplate {
-    /// Renders this template for a slot. `ports` must contain a
-    /// [`ResolvedPort`] for every port name this template references — true
-    /// of any `ports` produced by the same [`PortPlan`] this template came
-    /// from, which is the only supported use.
+    /// Renders this template for a slot. `ports` is `slot`'s
+    /// [`PortPlan::ports_for_slot`] result, which always has an entry for
+    /// every port name a validated template can reference.
     fn render(&self, ports: &[ResolvedPort], name: &str, slot: u32) -> String {
         let mut out = String::new();
         for segment in &self.segments {
@@ -143,17 +144,12 @@ impl PortPlan {
         })
     }
 
-    /// Resolves `sessions.env` templates for a slot. `ports` should be
-    /// [`PortPlan::ports_for_slot`]'s result for the same `slot`.
-    pub fn env_for_slot(
-        &self,
-        ports: &[ResolvedPort],
-        name: &str,
-        slot: u32,
-    ) -> Vec<(String, String)> {
+    /// Resolves `sessions.env` templates for a slot.
+    pub fn env_for_slot(&self, name: &str, slot: u32) -> Vec<(String, String)> {
+        let ports = self.ports_for_slot(slot);
         self.env
             .iter()
-            .map(|template| (template.name.clone(), template.render(ports, name, slot)))
+            .map(|template| (template.name.clone(), template.render(&ports, name, slot)))
             .collect()
     }
 
@@ -286,6 +282,11 @@ fn validate_env_entry(
     }
     if config.ports.contains_key(key) || key.starts_with(SESSION_VAR_PREFIX) {
         return Err(PlanError::EnvVarConflict {
+            key: key.to_string(),
+        });
+    }
+    if value.contains('\0') {
+        return Err(PlanError::InvalidEnvValue {
             key: key.to_string(),
         });
     }
@@ -491,38 +492,37 @@ mod tests {
         "SESSION_LABEL":"${LUCHTA_SESSION_NAME}-${LUCHTA_SESSION_SLOT}"
     }}"#;
 
+    /// Table-driven: each case is (slot, session name, expected resolved env).
     #[test]
-    fn env_templates_resolve_ports_for_the_slot() {
+    fn env_templates_resolve_ports_and_session_identity_per_slot() {
         let plan = plan(WITH_ENV).unwrap();
-        let ports = plan.ports_for_slot(1);
-        let env = plan.env_for_slot(&ports, "feature-x", 1);
-        assert_eq!(
-            env,
-            vec![
-                (
-                    "API_ROOT_URL".to_string(),
-                    "http://localhost:9090".to_string()
-                ),
-                ("SESSION_LABEL".to_string(), "feature-x-1".to_string()),
-            ]
-        );
-    }
-
-    #[test]
-    fn env_templates_resolve_session_identity_at_slot_zero() {
-        let plan = plan(WITH_ENV).unwrap();
-        let ports = plan.ports_for_slot(0);
-        let env = plan.env_for_slot(&ports, "app", 0);
-        assert_eq!(
-            env,
-            vec![
-                (
-                    "API_ROOT_URL".to_string(),
-                    "http://localhost:8090".to_string()
-                ),
-                ("SESSION_LABEL".to_string(), "app-0".to_string()),
-            ]
-        );
+        let cases = [
+            (
+                0,
+                "app",
+                vec![
+                    (
+                        "API_ROOT_URL".to_string(),
+                        "http://localhost:8090".to_string(),
+                    ),
+                    ("SESSION_LABEL".to_string(), "app-0".to_string()),
+                ],
+            ),
+            (
+                1,
+                "feature-x",
+                vec![
+                    (
+                        "API_ROOT_URL".to_string(),
+                        "http://localhost:9090".to_string(),
+                    ),
+                    ("SESSION_LABEL".to_string(), "feature-x-1".to_string()),
+                ],
+            ),
+        ];
+        for (slot, name, expected) in cases {
+            assert_eq!(plan.env_for_slot(name, slot), expected, "slot {slot}");
+        }
     }
 
     #[test]
@@ -531,10 +531,21 @@ mod tests {
             "PRICE":"$5 and $$10 and ${WEB}"
         }}"#;
         let plan = plan(json).unwrap();
-        let ports = plan.ports_for_slot(0);
         assert_eq!(
-            plan.env_for_slot(&ports, "app", 0),
+            plan.env_for_slot("app", 0),
             vec![("PRICE".to_string(), "$5 and $$10 and 8081".to_string())]
+        );
+    }
+
+    #[test]
+    fn a_dollar_immediately_before_a_placeholder_is_literal() {
+        // No escape syntax: `$${WEB}` is a literal `$` followed by the
+        // resolved placeholder, not an escaped literal `${WEB}`.
+        let json = r#"{"ports":{"WEB":{"default":8081}},"env":{"X":"$${WEB}"}}"#;
+        let plan = plan(json).unwrap();
+        assert_eq!(
+            plan.env_for_slot("app", 0),
+            vec![("X".to_string(), "$8081".to_string())]
         );
     }
 
@@ -545,9 +556,8 @@ mod tests {
             "A":"${API}"
         }}"#;
         let plan = plan(json).unwrap();
-        let ports = plan.ports_for_slot(0);
         assert_eq!(
-            plan.env_for_slot(&ports, "app", 0),
+            plan.env_for_slot("app", 0),
             vec![
                 ("Z".to_string(), "8081/8090/app/0".to_string()),
                 ("A".to_string(), "8090".to_string()),
@@ -573,6 +583,23 @@ mod tests {
     }
 
     #[test]
+    fn rejects_an_empty_env_placeholder() {
+        let json = r#"{"ports":{"WEB":{"default":8081}},"env":{"X":"${}"}}"#;
+        let error = plan(json).unwrap_err();
+        assert_eq!(
+            error,
+            PlanError::UnknownEnvPlaceholder {
+                key: "X".to_string(),
+                placeholder: String::new(),
+            }
+        );
+        assert_eq!(
+            error.to_string(),
+            "sessions.env.X: unknown placeholder `${}`; use a declared sessions.ports variable, LUCHTA_SESSION_NAME, or LUCHTA_SESSION_SLOT"
+        );
+    }
+
+    #[test]
     fn rejects_an_unterminated_env_placeholder() {
         let json = r#"{"ports":{"WEB":{"default":8081}},"env":{"X":"a ${WEB"}}"#;
         let error = plan(json).unwrap_err();
@@ -588,29 +615,65 @@ mod tests {
     #[test]
     fn rejects_an_invalid_env_var_name() {
         let json = r#"{"ports":{"WEB":{"default":8081}},"env":{"A=B":"x"}}"#;
+        let error = plan(json).unwrap_err();
+        assert_eq!(
+            error,
+            PlanError::InvalidEnvVarName {
+                key: "A=B".to_string(),
+            }
+        );
+        assert_eq!(
+            error.to_string(),
+            "sessions.env: `A=B` is not a valid environment variable name"
+        );
+    }
+
+    #[test]
+    fn rejects_an_empty_env_var_name() {
+        let json = r#"{"ports":{"WEB":{"default":8081}},"env":{"":"x"}}"#;
         assert_eq!(
             plan(json),
-            Err(PlanError::InvalidEnvVarName {
-                key: "A=B".to_string(),
-            })
+            Err(PlanError::InvalidEnvVarName { key: String::new() })
         );
     }
 
     #[test]
     fn rejects_env_keys_conflicting_with_ports_or_session_vars() {
         let json = r#"{"ports":{"WEB":{"default":8081}},"env":{"WEB":"x"}}"#;
+        let error = plan(json).unwrap_err();
         assert_eq!(
-            plan(json),
-            Err(PlanError::EnvVarConflict {
+            error,
+            PlanError::EnvVarConflict {
                 key: "WEB".to_string(),
-            })
+            }
         );
+        assert_eq!(
+            error.to_string(),
+            "sessions.env.WEB conflicts with a declared port variable or a LUCHTA_SESSION_* variable"
+        );
+
         let json = r#"{"ports":{"WEB":{"default":8081}},"env":{"LUCHTA_SESSION_FOO":"x"}}"#;
         assert_eq!(
             plan(json),
             Err(PlanError::EnvVarConflict {
                 key: "LUCHTA_SESSION_FOO".to_string(),
             })
+        );
+    }
+
+    #[test]
+    fn rejects_a_nul_byte_in_an_env_value() {
+        let json = "{\"ports\":{\"WEB\":{\"default\":8081}},\"env\":{\"X\":\"a\\u0000b\"}}";
+        let error = plan(json).unwrap_err();
+        assert_eq!(
+            error,
+            PlanError::InvalidEnvValue {
+                key: "X".to_string(),
+            }
+        );
+        assert_eq!(
+            error.to_string(),
+            "sessions.env.X: value must not contain a NUL byte"
         );
     }
 }

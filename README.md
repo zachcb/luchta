@@ -1492,9 +1492,11 @@ already in use by anything are skipped.
 Apps often pass ports around inside URLs rather than reading the port
 directly, so moving a port is useless unless dependent variables move with
 it. `sessions.env` declares extra env vars whose values are templates filled
-from the allocated ports and the session's identity: a `${NAME}` placeholder
-must name a declared `sessions.ports` variable, `LUCHTA_SESSION_NAME`, or
-`LUCHTA_SESSION_SLOT`; any other `$` is a literal character.
+from the allocated ports and the session's identity: `${` always begins a
+placeholder, which must name a declared `sessions.ports` variable,
+`LUCHTA_SESSION_NAME`, or `LUCHTA_SESSION_SLOT`. A `$` not followed by `{` is
+literal; there is no escape syntax, so `$${DEVSERVER_HTTP_PORT}` yields a `$`
+followed by the port, and a literal `${` can't be expressed.
 
 Declare **every** port your servers bind, including metrics ports: tools such
 as overmind set `PORT` identically in every worktree, so any fallback to it
