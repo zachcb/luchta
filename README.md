@@ -1482,7 +1482,8 @@ already in use by anything are skipped.
 - `--name <name>` overrides the session name (default: the workspace
   directory name). `--quiet` hides the startup banner.
 - The wrapper exits with the command's exit code, forwards SIGTERM/SIGHUP, and
-  lets Ctrl-C and Ctrl-\ reach the command directly.
+  lets Ctrl-C and Ctrl-\ reach the command directly. SIGINT or SIGQUIT sent to
+  the wrapper alone (not its process group) is absorbed, not forwarded.
 
 Declare **every** port your servers bind, including metrics ports: tools such
 as overmind set `PORT` identically in every worktree, so any fallback to it

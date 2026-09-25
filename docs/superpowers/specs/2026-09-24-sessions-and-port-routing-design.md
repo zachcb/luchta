@@ -159,7 +159,9 @@ hyphen, ≤ 63 chars). If a live session already has the name, append `-2`,
    overridden, with a one-line warning.
 5. Signals: ignore SIGINT and SIGQUIT (the terminal delivers both to the whole
    foreground group, including the child); forward SIGTERM and SIGHUP to the
-   child. On Windows, only wait (console Ctrl-C reaches the group).
+   child. Either signal sent to the wrapper alone (not its process group) is
+   likewise absorbed, not forwarded. On Windows, only wait (console Ctrl-C
+   reaches the group).
 6. Wait for the child; exit with its exit code (or 128+signal). Dropping the
    lock frees the slot.
 

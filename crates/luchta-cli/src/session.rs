@@ -282,7 +282,7 @@ fn exit_code(status: ExitStatus) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use luchta_sessions::{PortPlan, Registry, ResolvedPort};
+    use luchta_sessions::{PortPlan, PortProbe, Registry, ResolvedPort};
     use luchta_types::SessionsConfig;
     use tempfile::TempDir;
 
@@ -392,7 +392,17 @@ mod tests {
             command: vec!["/nonexistent/luchta-followup-cmd".to_string()],
             pid: std::process::id(),
         };
-        let session = allocate(&registry, &plan, request, &TcpProbe).unwrap();
+        // A fake, always-free probe: this test only cares that spawn failure
+        // releases the slot, not port availability, and a real `TcpProbe`
+        // would make the test's outcome depend on whether some unrelated
+        // process on the host happens to be bound to port 23081.
+        struct AlwaysFree;
+        impl PortProbe for AlwaysFree {
+            fn is_free(&self, _port: u16) -> bool {
+                true
+            }
+        }
+        let session = allocate(&registry, &plan, request, &AlwaysFree).unwrap();
 
         let result =
             run_in_session(session, &["/nonexistent/luchta-followup-cmd".to_string()]).await;

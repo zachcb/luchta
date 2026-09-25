@@ -43,7 +43,10 @@ fn accepts(ip: IpAddr, port: u16) -> bool {
 pub enum AllocError {
     #[error(transparent)]
     Registry(#[from] RegistryError),
-    #[error("failed to resolve workspace root {}: {source}", .path.display())]
+    // No `{source}` here: it is preserved via `#[source]` and rendered by
+    // callers that show the error chain (e.g. miette's `{:?}`); repeating it
+    // in Display would print the cause twice.
+    #[error("failed to resolve workspace root {}", .path.display())]
     WorkspaceRoot {
         path: PathBuf,
         #[source]
@@ -444,6 +447,26 @@ mod tests {
             probe.counts.borrow().get(&41081),
             Some(&1),
             "the preferred slot's busy port must be probed exactly once, not once per scan pass"
+        );
+    }
+
+    #[test]
+    fn workspace_root_error_display_does_not_duplicate_the_preserved_source() {
+        let source = io::Error::new(io::ErrorKind::NotFound, "boom");
+        let error = AllocError::WorkspaceRoot {
+            path: "/missing".into(),
+            source,
+        };
+        // The source is preserved via `#[source]` (and rendered by callers
+        // that show the error chain, e.g. miette's `{:?}`); the Display
+        // string must not repeat it, or chain-aware renderers show it twice.
+        assert_eq!(
+            error.to_string(),
+            "failed to resolve workspace root /missing"
+        );
+        assert_eq!(
+            std::error::Error::source(&error).unwrap().to_string(),
+            "boom"
         );
     }
 

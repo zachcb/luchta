@@ -25,7 +25,10 @@ const LAST_SLOTS: &str = "last-slots.json";
 pub enum RegistryError {
     #[error("could not determine a directory for session records; set {SESSIONS_DIR_ENV}")]
     NoRegistryDir,
-    #[error("failed to {action} {}: {source}", .path.display())]
+    // No `{source}` here: it is preserved via `#[source]` and rendered by
+    // callers that show the error chain (e.g. miette's `{:?}`); repeating it
+    // in Display would print the cause twice.
+    #[error("failed to {action} {}", .path.display())]
     Io {
         action: &'static str,
         path: PathBuf,
@@ -389,6 +392,24 @@ mod tests {
 
         assert_eq!(registry.last_slot(&gone), None);
         assert_eq!(registry.last_slot(&still_here), Some(4));
+    }
+
+    #[test]
+    fn io_error_display_does_not_duplicate_the_preserved_source() {
+        let source = io::Error::new(io::ErrorKind::NotFound, "boom");
+        let error = RegistryError::Io {
+            action: "open lock file",
+            path: PathBuf::from("/x"),
+            source,
+        };
+        // The source is preserved via `#[source]` (and rendered by callers
+        // that show the error chain, e.g. miette's `{:?}`); the Display
+        // string must not repeat it, or chain-aware renderers show it twice.
+        assert_eq!(error.to_string(), "failed to open lock file /x");
+        assert_eq!(
+            std::error::Error::source(&error).unwrap().to_string(),
+            "boom"
+        );
     }
 
     #[test]
