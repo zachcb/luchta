@@ -92,6 +92,7 @@ mod tests {
                 http: true,
                 default_service: false,
             }],
+            env: Vec::new(),
             paused_at: None,
         }
     }

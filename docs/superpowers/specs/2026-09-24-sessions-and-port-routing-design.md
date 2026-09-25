@@ -93,6 +93,14 @@ New optional top-level key in the `luchta-config` JSON:
 - Formative must declare **every** port its servers bind, metrics ports
   included; otherwise the `PORT`/`METRICS_PORT` fallbacks collide across
   worktrees.
+- `env` (optional; added after phase-1 review, for apps that pass ports
+  around inside URLs rather than reading a port variable directly): a map of
+  extra env var name → template string, resolved after allocation. A
+  `${NAME}` placeholder must be a declared `ports` key, `LUCHTA_SESSION_NAME`,
+  or `LUCHTA_SESSION_SLOT`; any other `$` is literal. For example:
+  ```jsonc
+  "env": { "API_ROOT_URL": "http://localhost:${DEVSERVER_HTTP_PORT}" }
+  ```
 
 ## 2. Session registry and liveness
 

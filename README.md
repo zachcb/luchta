@@ -1457,6 +1457,10 @@ side. Declare the ports your app reads from environment variables:
       "DEVSERVER_HTTP_PORT": { "default": 8081, "service": "web", "http": true },
       "AUTH_DEV_HTTP_PORT":  { "default": 8011, "service": "auth", "http": true },
       "REPORT_SERVER_METRICS_PORT": { "default": 9464 }
+    },
+    "env": {
+      "API_ROOT_URL": "http://localhost:${DEVSERVER_HTTP_PORT}",
+      "SESSION_LABEL": "${LUCHTA_SESSION_NAME}-${LUCHTA_SESSION_SLOT}"
     }
   }
 }
@@ -1484,6 +1488,13 @@ already in use by anything are skipped.
 - The wrapper exits with the command's exit code, forwards SIGTERM/SIGHUP, and
   lets Ctrl-C and Ctrl-\ reach the command directly. SIGINT or SIGQUIT sent to
   the wrapper alone (not its process group) is absorbed, not forwarded.
+
+Apps often pass ports around inside URLs rather than reading the port
+directly, so moving a port is useless unless dependent variables move with
+it. `sessions.env` declares extra env vars whose values are templates filled
+from the allocated ports and the session's identity: a `${NAME}` placeholder
+must name a declared `sessions.ports` variable, `LUCHTA_SESSION_NAME`, or
+`LUCHTA_SESSION_SLOT`; any other `$` is a literal character.
 
 Declare **every** port your servers bind, including metrics ports: tools such
 as overmind set `PORT` identically in every worktree, so any fallback to it

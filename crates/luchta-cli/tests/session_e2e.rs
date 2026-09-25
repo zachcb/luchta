@@ -16,6 +16,7 @@ use std::{
 use assert_fs::{prelude::*, TempDir};
 
 const CONFIG: &str = r#"{"sessions":{"ports":{"TEST_WEB_PORT":{"default":21081,"service":"web","http":true},"TEST_API_PORT":{"default":21090}}}}"#;
+const CONFIG_WITH_ENV: &str = r#"{"sessions":{"ports":{"TEST_WEB_PORT":{"default":21081,"service":"web","http":true},"TEST_API_PORT":{"default":21090}},"env":{"API_URL":"http://localhost:${TEST_WEB_PORT}"}}}"#;
 const HOLD: &str = r#"echo "$TEST_WEB_PORT" > port.out; while [ ! -f stop ]; do sleep 0.05; done"#;
 const WAIT: Duration = Duration::from_secs(10);
 
@@ -174,6 +175,51 @@ fn concurrent_worktrees_get_distinct_ports() {
 
     fs::write(a.path().join("stop"), "").unwrap();
     assert!(first.wait().success());
+}
+
+#[test]
+fn session_env_templates_resolve_per_slot() {
+    let (a, b) = (
+        workspace_with_config(CONFIG_WITH_ENV),
+        workspace_with_config(CONFIG_WITH_ENV),
+    );
+    let registry = TempDir::new().unwrap();
+    let mut first = Background::spawn(session_sh(a.path(), registry.path(), HOLD));
+    assert_eq!(wait_for_line(&a.path().join("port.out")), "21081");
+
+    let second = session_sh(b.path(), registry.path(), r#"echo "$API_URL" > env.out"#)
+        .output()
+        .unwrap();
+    assert!(second.status.success(), "{}", stderr_of(&second));
+    assert_eq!(
+        wait_for_line(&b.path().join("env.out")),
+        "http://localhost:22081"
+    );
+
+    fs::write(a.path().join("stop"), "").unwrap();
+    assert!(first.wait().success());
+}
+
+#[test]
+fn sessions_json_includes_resolved_env_templates() {
+    let ws = workspace_with_config(CONFIG_WITH_ENV);
+    let registry = TempDir::new().unwrap();
+    let mut first = Background::spawn(session_sh(ws.path(), registry.path(), HOLD));
+    wait_for_line(&ws.path().join("port.out"));
+
+    let listed = luchta(ws.path(), registry.path())
+        .args(["sessions", "--json"])
+        .output()
+        .unwrap();
+    assert!(listed.status.success(), "{}", stderr_of(&listed));
+    let records: serde_json::Value = serde_json::from_slice(&listed.stdout).unwrap();
+    assert_eq!(
+        records[0]["env"][0],
+        serde_json::json!({"name": "API_URL", "value": "http://localhost:21081"})
+    );
+
+    first.signal_group(libc::SIGKILL);
+    first.wait();
 }
 
 #[test]

@@ -49,6 +49,62 @@ pub enum PlanError {
     DefaultServiceNotHttp { env: String },
     #[error("sessions.ports.{env}.default must be greater than 0")]
     ZeroPort { env: String },
+    #[error(
+        "sessions.env.{key}: unknown placeholder `${{{placeholder}}}`; use a declared sessions.ports variable, LUCHTA_SESSION_NAME, or LUCHTA_SESSION_SLOT"
+    )]
+    UnknownEnvPlaceholder { key: String, placeholder: String },
+    #[error("sessions.env.{key}: unterminated `${{`")]
+    UnterminatedEnvPlaceholder { key: String },
+    #[error("sessions.env: `{key}` is not a valid environment variable name")]
+    InvalidEnvVarName { key: String },
+    #[error(
+        "sessions.env.{key} conflicts with a declared port variable or a LUCHTA_SESSION_* variable"
+    )]
+    EnvVarConflict { key: String },
+}
+
+/// A `sessions.env.{key}` value, pre-parsed into literal and placeholder
+/// segments so resolving it for a slot cannot fail.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct EnvTemplate {
+    name: String,
+    segments: Vec<EnvSegment>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum EnvSegment {
+    Literal(String),
+    Port(String),
+    SessionName,
+    SessionSlot,
+}
+
+impl EnvTemplate {
+    /// Renders this template for a slot. `ports` must contain a
+    /// [`ResolvedPort`] for every port name this template references — true
+    /// of any `ports` produced by the same [`PortPlan`] this template came
+    /// from, which is the only supported use.
+    fn render(&self, ports: &[ResolvedPort], name: &str, slot: u32) -> String {
+        let mut out = String::new();
+        for segment in &self.segments {
+            match segment {
+                EnvSegment::Literal(text) => out.push_str(text),
+                EnvSegment::Port(env) => out.push_str(&port_value(ports, env)),
+                EnvSegment::SessionName => out.push_str(name),
+                EnvSegment::SessionSlot => out.push_str(&slot.to_string()),
+            }
+        }
+        out
+    }
+}
+
+fn port_value(ports: &[ResolvedPort], env: &str) -> String {
+    ports
+        .iter()
+        .find(|port| port.env == env)
+        .expect("env template placeholders are validated against declared ports")
+        .port
+        .to_string()
 }
 
 /// A validated `sessions` config. Construct with [`PortPlan::from_config`].
@@ -58,6 +114,8 @@ pub struct PortPlan {
     max_slots: u32,
     /// Declared ports as resolved for slot 0.
     base: Vec<ResolvedPort>,
+    /// `sessions.env` templates, in declared order.
+    env: Vec<EnvTemplate>,
 }
 
 impl PortPlan {
@@ -65,6 +123,7 @@ impl PortPlan {
         validate_limits(config)?;
         validate_names(config)?;
         validate_ranges(config)?;
+        let env = validate_env(config)?;
         let base = config
             .ports
             .iter()
@@ -80,7 +139,22 @@ impl PortPlan {
             stride: config.slot_stride,
             max_slots: config.max_slots,
             base,
+            env,
         })
+    }
+
+    /// Resolves `sessions.env` templates for a slot. `ports` should be
+    /// [`PortPlan::ports_for_slot`]'s result for the same `slot`.
+    pub fn env_for_slot(
+        &self,
+        ports: &[ResolvedPort],
+        name: &str,
+        slot: u32,
+    ) -> Vec<(String, String)> {
+        self.env
+            .iter()
+            .map(|template| (template.name.clone(), template.render(ports, name, slot)))
+            .collect()
     }
 
     pub fn max_slots(&self) -> u32 {
@@ -186,6 +260,84 @@ fn validate_ranges(config: &SessionsConfig) -> Result<(), PlanError> {
         }
     }
     Ok(())
+}
+
+const SESSION_NAME_VAR: &str = "LUCHTA_SESSION_NAME";
+const SESSION_SLOT_VAR: &str = "LUCHTA_SESSION_SLOT";
+const SESSION_VAR_PREFIX: &str = "LUCHTA_SESSION_";
+
+fn validate_env(config: &SessionsConfig) -> Result<Vec<EnvTemplate>, PlanError> {
+    config
+        .env
+        .iter()
+        .map(|(key, value)| validate_env_entry(config, key, value))
+        .collect()
+}
+
+fn validate_env_entry(
+    config: &SessionsConfig,
+    key: &str,
+    value: &str,
+) -> Result<EnvTemplate, PlanError> {
+    if key.is_empty() || key.contains(['=', '\0']) {
+        return Err(PlanError::InvalidEnvVarName {
+            key: key.to_string(),
+        });
+    }
+    if config.ports.contains_key(key) || key.starts_with(SESSION_VAR_PREFIX) {
+        return Err(PlanError::EnvVarConflict {
+            key: key.to_string(),
+        });
+    }
+    let segments = parse_env_segments(config, key, value)?;
+    Ok(EnvTemplate {
+        name: key.to_string(),
+        segments,
+    })
+}
+
+/// Splits `value` on `${NAME}` placeholders, validating each `NAME` against
+/// `config`'s declared ports and the two session-identity variables.
+fn parse_env_segments(
+    config: &SessionsConfig,
+    key: &str,
+    value: &str,
+) -> Result<Vec<EnvSegment>, PlanError> {
+    let mut segments = Vec::new();
+    let mut rest = value;
+    while let Some(start) = rest.find("${") {
+        if start > 0 {
+            segments.push(EnvSegment::Literal(rest[..start].to_string()));
+        }
+        let after_open = &rest[start + 2..];
+        let Some(end) = after_open.find('}') else {
+            return Err(PlanError::UnterminatedEnvPlaceholder {
+                key: key.to_string(),
+            });
+        };
+        segments.push(env_segment_for(config, key, &after_open[..end])?);
+        rest = &after_open[end + 1..];
+    }
+    if !rest.is_empty() {
+        segments.push(EnvSegment::Literal(rest.to_string()));
+    }
+    Ok(segments)
+}
+
+fn env_segment_for(
+    config: &SessionsConfig,
+    key: &str,
+    name: &str,
+) -> Result<EnvSegment, PlanError> {
+    match name {
+        SESSION_NAME_VAR => Ok(EnvSegment::SessionName),
+        SESSION_SLOT_VAR => Ok(EnvSegment::SessionSlot),
+        _ if config.ports.contains_key(name) => Ok(EnvSegment::Port(name.to_string())),
+        _ => Err(PlanError::UnknownEnvPlaceholder {
+            key: key.to_string(),
+            placeholder: name.to_string(),
+        }),
+    }
 }
 
 #[cfg(test)]
@@ -327,6 +479,137 @@ mod tests {
             plan(r#"{"ports":{"A":{"default":0}}}"#),
             Err(PlanError::ZeroPort {
                 env: "A".to_string()
+            })
+        );
+    }
+
+    const WITH_ENV: &str = r#"{"ports":{
+        "WEB":{"default":8081},
+        "API":{"default":8090}
+    },"env":{
+        "API_ROOT_URL":"http://localhost:${API}",
+        "SESSION_LABEL":"${LUCHTA_SESSION_NAME}-${LUCHTA_SESSION_SLOT}"
+    }}"#;
+
+    #[test]
+    fn env_templates_resolve_ports_for_the_slot() {
+        let plan = plan(WITH_ENV).unwrap();
+        let ports = plan.ports_for_slot(1);
+        let env = plan.env_for_slot(&ports, "feature-x", 1);
+        assert_eq!(
+            env,
+            vec![
+                (
+                    "API_ROOT_URL".to_string(),
+                    "http://localhost:9090".to_string()
+                ),
+                ("SESSION_LABEL".to_string(), "feature-x-1".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn env_templates_resolve_session_identity_at_slot_zero() {
+        let plan = plan(WITH_ENV).unwrap();
+        let ports = plan.ports_for_slot(0);
+        let env = plan.env_for_slot(&ports, "app", 0);
+        assert_eq!(
+            env,
+            vec![
+                (
+                    "API_ROOT_URL".to_string(),
+                    "http://localhost:8090".to_string()
+                ),
+                ("SESSION_LABEL".to_string(), "app-0".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn env_templates_keep_literal_dollars() {
+        let json = r#"{"ports":{"WEB":{"default":8081}},"env":{
+            "PRICE":"$5 and $$10 and ${WEB}"
+        }}"#;
+        let plan = plan(json).unwrap();
+        let ports = plan.ports_for_slot(0);
+        assert_eq!(
+            plan.env_for_slot(&ports, "app", 0),
+            vec![("PRICE".to_string(), "$5 and $$10 and 8081".to_string())]
+        );
+    }
+
+    #[test]
+    fn env_templates_support_multiple_placeholders_and_declared_order() {
+        let json = r#"{"ports":{"WEB":{"default":8081},"API":{"default":8090}},"env":{
+            "Z":"${WEB}/${API}/${LUCHTA_SESSION_NAME}/${LUCHTA_SESSION_SLOT}",
+            "A":"${API}"
+        }}"#;
+        let plan = plan(json).unwrap();
+        let ports = plan.ports_for_slot(0);
+        assert_eq!(
+            plan.env_for_slot(&ports, "app", 0),
+            vec![
+                ("Z".to_string(), "8081/8090/app/0".to_string()),
+                ("A".to_string(), "8090".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn rejects_an_unknown_env_placeholder() {
+        let json = r#"{"ports":{"WEB":{"default":8081}},"env":{"X":"${NOPE}"}}"#;
+        let error = plan(json).unwrap_err();
+        assert_eq!(
+            error,
+            PlanError::UnknownEnvPlaceholder {
+                key: "X".to_string(),
+                placeholder: "NOPE".to_string(),
+            }
+        );
+        assert_eq!(
+            error.to_string(),
+            "sessions.env.X: unknown placeholder `${NOPE}`; use a declared sessions.ports variable, LUCHTA_SESSION_NAME, or LUCHTA_SESSION_SLOT"
+        );
+    }
+
+    #[test]
+    fn rejects_an_unterminated_env_placeholder() {
+        let json = r#"{"ports":{"WEB":{"default":8081}},"env":{"X":"a ${WEB"}}"#;
+        let error = plan(json).unwrap_err();
+        assert_eq!(
+            error,
+            PlanError::UnterminatedEnvPlaceholder {
+                key: "X".to_string(),
+            }
+        );
+        assert_eq!(error.to_string(), "sessions.env.X: unterminated `${`");
+    }
+
+    #[test]
+    fn rejects_an_invalid_env_var_name() {
+        let json = r#"{"ports":{"WEB":{"default":8081}},"env":{"A=B":"x"}}"#;
+        assert_eq!(
+            plan(json),
+            Err(PlanError::InvalidEnvVarName {
+                key: "A=B".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn rejects_env_keys_conflicting_with_ports_or_session_vars() {
+        let json = r#"{"ports":{"WEB":{"default":8081}},"env":{"WEB":"x"}}"#;
+        assert_eq!(
+            plan(json),
+            Err(PlanError::EnvVarConflict {
+                key: "WEB".to_string(),
+            })
+        );
+        let json = r#"{"ports":{"WEB":{"default":8081}},"env":{"LUCHTA_SESSION_FOO":"x"}}"#;
+        assert_eq!(
+            plan(json),
+            Err(PlanError::EnvVarConflict {
+                key: "LUCHTA_SESSION_FOO".to_string(),
             })
         );
     }

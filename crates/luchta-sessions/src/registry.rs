@@ -61,9 +61,19 @@ pub struct SessionRecord {
     /// Unix seconds.
     pub started_at: u64,
     pub ports: Vec<ResolvedPort>,
+    /// Resolved `sessions.env` templates for this slot, in declared order.
+    #[serde(default)]
+    pub env: Vec<SessionEnvVar>,
     /// Unix seconds when paused (phase 3); `None` while running.
     #[serde(default)]
     pub paused_at: Option<u64>,
+}
+
+/// One resolved `sessions.env` entry.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionEnvVar {
+    pub name: String,
+    pub value: String,
 }
 
 /// A slot whose lock is held. `record` is `None` when the record file is
@@ -281,6 +291,7 @@ mod tests {
             command: vec!["true".to_string()],
             started_at: 0,
             ports: Vec::new(),
+            env: Vec::new(),
             paused_at: None,
         }
     }
@@ -392,6 +403,17 @@ mod tests {
 
         assert_eq!(registry.last_slot(&gone), None);
         assert_eq!(registry.last_slot(&still_here), Some(4));
+    }
+
+    #[test]
+    fn a_record_without_env_deserializes_with_empty_env() {
+        let json = r#"{
+            "slot": 0, "id": "0-1-0", "name": "app", "pid": 1,
+            "workspace_root": "/ws", "branch": null, "command": [],
+            "started_at": 0, "ports": []
+        }"#;
+        let record: SessionRecord = serde_json::from_str(json).unwrap();
+        assert!(record.env.is_empty());
     }
 
     #[test]

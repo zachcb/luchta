@@ -24,6 +24,10 @@ pub struct SessionsConfig {
     /// Env var name → port declaration, in declared order.
     #[serde(default)]
     pub ports: IndexMap<String, SessionPortSpec>,
+    /// Extra env vars whose values are templates filled from the allocated
+    /// ports and session identity, in declared order.
+    #[serde(default)]
+    pub env: IndexMap<String, String>,
 }
 
 /// One port the app reads from an environment variable.
@@ -102,6 +106,33 @@ mod tests {
         let result: Result<SessionsConfig, _> =
             serde_json::from_str(r#"{"ports":{"P":{"default":70000}}}"#);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn env_templates_parse_in_declared_order() {
+        let config: SessionsConfig = serde_json::from_str(
+            r#"{"ports":{"P":{"default":1}},"env":{
+                "SESSION_LABEL":"${LUCHTA_SESSION_NAME}-${LUCHTA_SESSION_SLOT}",
+                "API_ROOT_URL":"http://localhost:${P}"
+            }}"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            config.env.keys().map(String::as_str).collect::<Vec<_>>(),
+            ["SESSION_LABEL", "API_ROOT_URL"]
+        );
+        assert_eq!(
+            config.env["API_ROOT_URL"],
+            "http://localhost:${P}".to_string()
+        );
+    }
+
+    #[test]
+    fn env_templates_default_to_empty() {
+        let config: SessionsConfig =
+            serde_json::from_str(r#"{"ports":{"P":{"default":1}}}"#).unwrap();
+        assert!(config.env.is_empty());
     }
 
     #[test]

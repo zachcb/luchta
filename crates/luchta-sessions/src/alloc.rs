@@ -9,7 +9,7 @@ use std::{
 
 use crate::{
     dedupe_name, sanitize_label, unix_now, PortPlan, Registry, RegistryError, ResolvedPort,
-    SessionRecord, SlotLock,
+    SessionEnvVar, SessionRecord, SlotLock,
 };
 
 /// Decides whether a port is free for a new session to use.
@@ -132,16 +132,19 @@ pub fn allocate(
     let Some((lock, ports)) = claim_slot(registry, plan, preferred, probe)? else {
         return Err(AllocError::NoFreeSlot { live: records });
     };
+    let name = session_name(request.name, &workspace_root, &records);
+    let env = resolved_env(plan, &ports, &name, lock.slot());
     let record = SessionRecord {
         slot: lock.slot(),
         id: session_id(lock.slot(), request.pid),
-        name: session_name(request.name, &workspace_root, &records),
+        name,
         pid: request.pid,
         workspace_root,
         branch: request.branch,
         command: request.command,
         started_at: unix_now(),
         ports,
+        env,
         paused_at: None,
     };
     registry.write_record(&record)?;
@@ -153,6 +156,18 @@ pub fn allocate(
         record,
         _lock: lock,
     })
+}
+
+fn resolved_env(
+    plan: &PortPlan,
+    ports: &[ResolvedPort],
+    name: &str,
+    slot: u32,
+) -> Vec<SessionEnvVar> {
+    plan.env_for_slot(ports, name, slot)
+        .into_iter()
+        .map(|(name, value)| SessionEnvVar { name, value })
+        .collect()
 }
 
 fn claim_slot(
@@ -199,7 +214,7 @@ fn session_id(slot: u32, pid: u32) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::LiveSession;
+    use crate::{LiveSession, SessionEnvVar};
     use luchta_types::SessionsConfig;
     use std::{
         cell::RefCell,
@@ -258,6 +273,38 @@ mod tests {
             command: vec!["overmind".to_string(), "s".to_string()],
             pid: 4242,
         }
+    }
+
+    #[test]
+    fn the_allocated_record_carries_resolved_env_for_its_slot_and_name() {
+        let fx = Fixture::new();
+        let (a, b) = (fx.workspace("a"), fx.workspace("b"));
+        let plan = plan_from(
+            r#"{"maxSlots":3,"ports":{
+                "WEB":{"default":41081},
+                "API":{"default":41090}
+            },"env":{
+                "API_ROOT_URL":"http://localhost:${API}",
+                "SESSION_LABEL":"${LUCHTA_SESSION_NAME}-${LUCHTA_SESSION_SLOT}"
+            }}"#,
+        );
+        let _first = allocate(&fx.registry, &plan, request(&a), &all_free()).unwrap();
+        let second = allocate(&fx.registry, &plan, request(&b), &all_free()).unwrap();
+
+        assert_eq!(second.record().slot, 1);
+        assert_eq!(
+            second.record().env,
+            vec![
+                SessionEnvVar {
+                    name: "API_ROOT_URL".to_string(),
+                    value: "http://localhost:42090".to_string(),
+                },
+                SessionEnvVar {
+                    name: "SESSION_LABEL".to_string(),
+                    value: "b-1".to_string(),
+                },
+            ]
+        );
     }
 
     #[test]

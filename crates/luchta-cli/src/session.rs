@@ -137,44 +137,47 @@ fn current_branch(workspace_root: &Path) -> Option<String> {
     (output.status.success() && !branch.is_empty() && branch != "HEAD").then_some(branch)
 }
 
-fn child_env(record: &SessionRecord) -> Vec<(String, String)> {
-    let mut env: Vec<(String, String)> = record
+/// The port vars and resolved `sessions.env` templates this session sets in
+/// the child's environment, in that order — everything the user declared,
+/// as opposed to the `LUCHTA_SESSION_*` identity vars `child_env` also adds.
+fn declared_vars(record: &SessionRecord) -> impl Iterator<Item = (String, String)> + '_ {
+    record
         .ports
         .iter()
         .map(|port| (port.env.clone(), port.port.to_string()))
-        .collect();
+        .chain(
+            record
+                .env
+                .iter()
+                .map(|var| (var.name.clone(), var.value.clone())),
+        )
+}
+
+fn child_env(record: &SessionRecord) -> Vec<(String, String)> {
+    let mut env: Vec<(String, String)> = declared_vars(record).collect();
     env.push(("LUCHTA_SESSION_NAME".to_string(), record.name.clone()));
     env.push(("LUCHTA_SESSION_SLOT".to_string(), record.slot.to_string()));
     env.push(("LUCHTA_SESSION_ID".to_string(), record.id.clone()));
     env
 }
 
-/// Warning lines for declared port vars whose current value (as `lookup`
-/// reports it) differs from what this session will set. Only `record.ports`
-/// is considered — never `LUCHTA_SESSION_*` — so a session started inside
-/// another session doesn't warn about identity vars the outer session set.
-fn overridden_ports(
-    record: &SessionRecord,
-    lookup: impl Fn(&str) -> Option<String>,
-) -> Vec<String> {
-    record
-        .ports
-        .iter()
-        .filter_map(|port| {
-            let existing = lookup(&port.env)?;
-            let value = port.port.to_string();
-            (existing != value).then(|| {
-                format!(
-                    "luchta session: overriding {}={existing} with {value}",
-                    port.env
-                )
-            })
+/// Warning lines for declared port vars and templated `sessions.env` vars
+/// whose current value (as `lookup` reports it) differs from what this
+/// session will set. Only [`declared_vars`] is considered — never
+/// `LUCHTA_SESSION_*` — so a session started inside another session doesn't
+/// warn about identity vars the outer session set.
+fn overridden_vars(record: &SessionRecord, lookup: impl Fn(&str) -> Option<String>) -> Vec<String> {
+    declared_vars(record)
+        .filter_map(|(key, value)| {
+            let existing = lookup(&key)?;
+            (existing != value)
+                .then(|| format!("luchta session: overriding {key}={existing} with {value}"))
         })
         .collect()
 }
 
 fn warn_about_overrides(record: &SessionRecord) {
-    for line in overridden_ports(record, |key| std::env::var(key).ok()) {
+    for line in overridden_vars(record, |key| std::env::var(key).ok()) {
         eprintln!("{line}");
     }
 }
@@ -282,7 +285,7 @@ fn exit_code(status: ExitStatus) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use luchta_sessions::{PortPlan, PortProbe, Registry, ResolvedPort};
+    use luchta_sessions::{PortPlan, PortProbe, Registry, ResolvedPort, SessionEnvVar};
     use luchta_types::SessionsConfig;
     use tempfile::TempDir;
 
@@ -319,6 +322,10 @@ mod tests {
                     default_service: false,
                 },
             ],
+            env: vec![SessionEnvVar {
+                name: "API_ROOT_URL".to_string(),
+                value: "http://localhost:9081".to_string(),
+            }],
             paused_at: None,
         }
     }
@@ -342,6 +349,15 @@ mod tests {
     }
 
     #[test]
+    fn child_env_includes_templated_vars() {
+        let env = child_env(&record());
+        assert!(env.contains(&(
+            "API_ROOT_URL".to_string(),
+            "http://localhost:9081".to_string()
+        )));
+    }
+
+    #[test]
     fn ages_are_compact() {
         let now = unix_now();
         assert_eq!(format_age(now), "0s");
@@ -351,7 +367,7 @@ mod tests {
     }
 
     #[test]
-    fn overridden_ports_warns_only_for_declared_port_vars() {
+    fn overridden_vars_warns_only_for_declared_port_and_templated_vars() {
         let lookup = |key: &str| match key {
             "WEB" => Some("1234".to_string()),
             // A session-inside-a-session would have these preset by the
@@ -362,18 +378,34 @@ mod tests {
             _ => None,
         };
         assert_eq!(
-            overridden_ports(&record(), lookup),
+            overridden_vars(&record(), lookup),
             vec!["luchta session: overriding WEB=1234 with 9081".to_string()]
         );
     }
 
     #[test]
-    fn overridden_ports_is_silent_when_values_match_or_are_unset() {
+    fn overridden_vars_covers_templated_env_vars() {
         let lookup = |key: &str| match key {
-            "AUTH_PORT" => Some("9011".to_string()),
+            "API_ROOT_URL" => Some("http://localhost:1234".to_string()),
             _ => None,
         };
-        assert!(overridden_ports(&record(), lookup).is_empty());
+        assert_eq!(
+            overridden_vars(&record(), lookup),
+            vec![
+                "luchta session: overriding API_ROOT_URL=http://localhost:1234 with http://localhost:9081"
+                    .to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn overridden_vars_is_silent_when_values_match_or_are_unset() {
+        let lookup = |key: &str| match key {
+            "AUTH_PORT" => Some("9011".to_string()),
+            "API_ROOT_URL" => Some("http://localhost:9081".to_string()),
+            _ => None,
+        };
+        assert!(overridden_vars(&record(), lookup).is_empty());
     }
 
     #[tokio::test]
