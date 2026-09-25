@@ -174,6 +174,25 @@ pub enum Commands {
         #[arg(short = 'T', long = "top-level")]
         top_level: bool,
     },
+    /// Run a long-lived command (e.g. dev servers) with ports allocated for
+    /// this worktree, refusing to start if this worktree already has one.
+    Session {
+        /// Session name (defaults to the workspace directory name).
+        #[arg(long)]
+        name: Option<String>,
+        /// Do not print the session banner.
+        #[arg(long)]
+        quiet: bool,
+        /// Command to run, after `--`.
+        #[arg(last = true, required = true, value_name = "COMMAND")]
+        command: Vec<String>,
+    },
+    /// List live `luchta session` sessions and their URLs.
+    Sessions {
+        /// Print the session records as JSON.
+        #[arg(long)]
+        json: bool,
+    },
     /// View cached logs and metadata for previously executed tasks.
     Logs {
         /// Task names to match; supports glob wildcards.

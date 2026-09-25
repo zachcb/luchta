@@ -2809,6 +2809,7 @@ dependencies = [
  "luchta-cache",
  "luchta-engine",
  "luchta-lockfiles",
+ "luchta-sessions",
  "luchta-test-support",
  "luchta-types",
  "luchta-worker",
@@ -2992,6 +2993,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "luchta-sessions"
+version = "0.3.2"
+dependencies = [
+ "dirs",
+ "luchta-types",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "luchta-swc-transform-worker"
 version = "0.3.2"
 dependencies = [
@@ -3014,6 +3027,7 @@ version = "0.3.2"
 name = "luchta-types"
 version = "0.3.2"
 dependencies = [
+ "indexmap",
  "serde",
  "serde_json",
  "toml",
